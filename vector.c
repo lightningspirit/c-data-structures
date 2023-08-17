@@ -1,207 +1,269 @@
+// SPDX-License-Identifier: MIT
 /**
  * @file vector.c
- * @author lightningspirit@gmail.com
- * @brief Vector implementation
+ * @brief Dynamically vector implementation
  * @version 0.1
- * @date 2023-01-07
+ * @date 2023-05-02
  *
- * @copyright Copyright (c) 2023 MIT License
+ * @copyright Copyright (c) 2023 lightningspirit
  *
  */
+
 #include <stdlib.h>
-#include "malloc.h"
+#include <string.h>
+#include "heap.h"
 #include "vector.h"
 
-/**
- * @brief Construct a new t vector nullify object
- * 
- * @param v 
- * @param start 0-based index
- * @param end 0-based index
- */
-static inline void t_vector_nullify(t_vector *v, size_t start, size_t end)
+struct vector_t
 {
-  for (; start <= end; start++) {
-    v->elements[start] = NULL;
-  }
+  size_t size;
+  void **items;
+};
+
+struct vector_t_iterator
+{
+  size_t cursor;
+  vector_t *vector;
+};
+
+void vector_t_init(vector_t **v)
+{
+  *v = malloc_realloc(sizeof(**v), NULL);
+
+  if (*v == NULL)
+    return;
+
+  (*v)->size = 0;
+  (*v)->items = NULL;
 }
 
-/**
- * @brief 
- * 
- * @param size 
- */
-static inline size_t zero_based(size_t size)
+vector_t *vector_t_create(size_t size)
 {
-  return size - 1;
-}
+  vector_t *v = NULL;
+  vector_t_init(&v);
 
-/**
- * @brief Construct a new count based object
- * 
- * @param index 
- */
-static inline size_t count_based(size_t index)
-{
-  return index + 1;
-}
-
-t_vector* t_vector_create(size_t size)
-{
-  t_vector *v;
-  
-  v = malloc_safe(sizeof(*v));
-  
-  v->size = 0;
-  v->elements = NULL;
-
-  if (size > 0) {
-    t_vector_resize(v, size);
+  if (size > 0)
+  {
+    vector_t_resize(v, size);
     v->size = size;
   }
 
   return v;
 }
 
-void t_vector_destroy(t_vector *v)
+void vector_t_destroy(vector_t *v)
 {
-  t_vector_clean(v);
+  if (v == NULL)
+    return;
+
+  if (v->items != NULL)
+    free(v->items);
+
   free(v);
-  v = NULL;
 }
 
-void t_vector_clean(t_vector *v)
+void vector_t_resize(vector_t *v, const size_t size)
 {
-  if (v->elements != NULL) {
-    free(v->elements);
-    v->elements = NULL;
-  }
+  if (v == NULL)
+    vector_t_init(&v);
+
+  v->items = malloc_realloc(sizeof(void *) * size, v->items);
+
+  for (size_t i = v->size; i < size; i++)
+    v->items[i] = NULL;
+
+  v->size = size;
 }
 
-size_t t_vector_size(t_vector *v)
+size_t vector_t_compact(vector_t *v)
 {
-  return v->size;
-}
+  if (v == NULL || v->items == NULL)
+    return 0;
 
-void t_vector_resize(t_vector *v, size_t size)
-{
-  v->elements = malloc_realloc_safe(sizeof(void *) * size, v->elements);
+  size_t cursor = 0;
 
-  if (size > v->size) {
-    t_vector_nullify(v, v->size - 1, size);
-  }
-}
-
-void t_vector_compact(t_vector *v)
-{
-  size_t null_values = 0;
-
-  for (size_t i = 0; i < v->size; i++) {
-    if (v->elements[i] == NULL) {
-      null_values++;
-    } else {
-      if (null_values > 0) {
-        t_vector_swap(v, zero_based(null_values), i);
-      }
+  for (size_t i = 0; i < v->size; i++)
+  {
+    if (v->items[i] != NULL)
+    {
+      v->items[cursor] = v->items[i];
+      cursor++;
     }
   }
 
-  if (null_values > 0) {
-    // null_values is now used to count new size
-    null_values = v->size - null_values;
-    t_vector_resize(v, null_values);
-    v->size = null_values;
+  for (size_t i = cursor; i < v->size; i++)
+    v->items[i] = NULL;
+
+  return cursor;
+}
+
+void vector_t_insert(vector_t *v, const size_t index, void *item)
+{
+  if (v == NULL || v->items == NULL)
+    vector_t_resize(v, index);
+
+  if (index >= v->size)
+  {
+    vector_t_resize(v, index + 1);
+  }
+  else
+  {
+    if (v->items[index] != NULL)
+    {
+      if (v->items[v->size - 1] != NULL)
+        vector_t_resize(v, v->size + 1);
+
+      memmove(&v->items[index + 1], &v->items[index], (v->size - index) * sizeof(void *));
+    }
+  }
+
+  v->items[index] = item;
+}
+
+void vector_t_set(vector_t *v, const size_t index, void *item)
+{
+  if (v == NULL || v->items == NULL || index >= v->size)
+    vector_t_resize(v, index + 1);
+
+  v->items[index] = item;
+}
+
+void vector_t_remove(vector_t *v, size_t index, const size_t count)
+{
+  if (v->items == NULL || index >= v->size)
+    return;
+
+  // size:= 10, index:= 7, count := 1
+  // 7; 7 < 10 -> v[7] = v[8]
+  // 8; 8 < 10 -> v[8] = v[9]
+  // 9; 9 < 10 -> v[9] = NULL
+
+  // size:= 10, index:= 5, count := 2
+  // 5; 5 < 10 -> v[5] = v[7]
+  // 6; 6 < 10 -> v[6] = v[8]
+  // 7; 7 < 10 -> v[7] = v[9]
+  // 8; 8 < 10 -> v[8] = NULL
+  // 9; 9 < 10 -> v[9] = NULL
+  for (; index < v->size; index++)
+    v->items[index] = index + count < v->size
+                          ? v->items[index + count]
+                          : NULL;
+}
+
+void vector_t_push(vector_t *v, void *item)
+{
+  size_t i = v->size - 1;
+
+  for (; i >= 0; i--)
+    if (v->items[i] != NULL)
+      break;
+
+  i++;
+
+  if (i == v->size)
+    vector_t_resize(v, i + 1);
+
+  v->items[i] = item;
+}
+
+void *vector_t_get(const vector_t *vector, const size_t index)
+{
+  if (vector->items == NULL || index >= vector->size)
+    return NULL;
+
+  return vector->items[index];
+}
+
+size_t vector_t_size(const vector_t *vector)
+{
+  return vector->size;
+}
+
+void vector_t_move(vector_t *v, const size_t origin, const size_t destination)
+{
+  if (v == NULL || v->items == NULL || origin >= v->size)
+    return;
+
+  if (destination >= v->size)
+    vector_t_resize(v, destination + 1);
+
+  v->items[destination] = v->items[origin];
+  v->items[origin] = NULL;
+}
+
+void vector_t_swap(vector_t *v, size_t idx1, size_t idx2)
+{
+  if (v == NULL || v->items == NULL)
+    return;
+
+  if (idx1 >= v->size || idx2 >= v->size)
+    vector_t_resize(v, (idx1 > idx2 ? idx1 : idx2) + 1);
+
+  if (idx1 == idx2)
+    return;
+
+  void *t = v->items[idx1];
+  v->items[idx1] = v->items[idx2];
+  v->items[idx2] = t;
+}
+
+vector_t *vector_t_copy(const vector_t *o)
+{
+  vector_t *v = vector_t_create(o->size);
+  memcpy(v->items, o->items, v->size * sizeof(void *));
+  return v;
+}
+
+void vector_t_reverse(vector_t *v)
+{
+  void *t = NULL;
+
+  for (size_t i = 0; i < (size_t)v->size / 2; i++)
+  {
+    t = v->items[i];
+    v->items[i] = v->items[v->size - 1 - i];
+    v->items[v->size - 1 - i] = t;
   }
 }
 
-void t_vector_push(t_vector *v, void *element)
+void vector_t_clean(vector_t *v)
 {
-  // first ensure the correct size
-  t_vector_resize(v, v->size + 1);
-  v->elements[v->size++] = element;
-}
+  if (v == NULL || v->items == NULL)
+    return;
 
-void t_vector_set(t_vector *v, size_t position, void *element)
-{
-  if (position > zero_based(v->size)) {
-    t_vector_resize(v, count_based(position));
-    v->size = count_based(position);
+  for (size_t i = 0; i < v->size; i++)
+  {
+    v->items[i] = NULL;
   }
-
-  v->elements[position] = element;
 }
 
-void t_vector_swap(t_vector *v, size_t pos1, size_t pos2)
+vector_t_iterator *vector_t_iterator_create(vector_t *vector)
 {
-  if (pos1 > zero_based(v->size) || pos2 > zero_based(v->size)) {
-    // resize if pos1 or pos2 overflows vector size
-    size_t new_size = count_based(pos1 > pos2 ? pos1 : pos2);
-    t_vector_resize(v, new_size);
-    v->size = new_size;
-  }
-
-  void *tmp = t_vector_get(v, pos1);
-  t_vector_set(v, pos1, t_vector_get(v, pos2));
-  t_vector_set(v, pos2, tmp);
+  vector_t_iterator *iter = malloc_realloc(sizeof(vector_t_iterator), NULL);
+  iter->cursor = 0;
+  iter->vector = vector;
+  return iter;
 }
 
-void* t_vector_get(t_vector *v, size_t position)
+void vector_t_iterator_destroy(vector_t_iterator *iter)
 {
-  if (position > zero_based(v->size)) return NULL;
-  return v->elements[position];
+  free(iter);
 }
 
-void t_vector_remove(t_vector *v, size_t position)
+size_t vector_t_iterator_cursor(vector_t_iterator *iter)
 {
-  // first ensure the correct size
-  if (position > zero_based(v->size)) return;
-
-  void *elem = v->elements[position];
-  free(elem);
-
-  // move all subsequent one position before
-  while (position <= zero_based(v->size)) {
-    v->elements[position] = v->elements[position + 1];
-    position++;
-  }
-
-  t_vector_resize(v, v->size - 1);
-  v->size--;
+  return iter->cursor == 0 ? 0 : iter->cursor - 1;
 }
 
-void t_vector_pop(t_vector *v)
+void *vector_t_iterator_next(vector_t_iterator *iter)
 {
-  t_vector_remove(v, zero_based(v->size));
+  if (iter->cursor >= iter->vector->size)
+    return NULL;
+
+  return vector_t_get(iter->vector, iter->cursor++);
 }
 
-void t_vector_shift(t_vector *v)
+void vector_t_iterator_reset(vector_t_iterator *iter)
 {
-  return t_vector_remove(v, 0);
-}
-
-void* t_vector_first(t_vector *v)
-{
-  if (t_vector_size(v) > 0) {
-    return t_vector_get(v, 0);
-  }
-
-  return NULL;
-}
-
-void* t_vector_last(t_vector *v)
-{
-  if (t_vector_size(v) > 0) {
-    return t_vector_get(v, zero_based(v->size));
-  }
-
-  return NULL;
-}
-
-void t_vector_reverse(t_vector *v)
-{
-  size_t n = v->size / 2;
-
-  for (size_t i = 0; i < n; i++) {
-    t_vector_swap(v, i, v->size - i - 1);
-  }
+  iter->cursor = 0;
 }
